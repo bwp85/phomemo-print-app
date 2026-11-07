@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>M220 Print</title>
+<style>
+:root{
+  --bg:#e9edf0; --panel:#ffffff; --ink:#151a1f; --muted:#5d6872; --line:#cfd6dc;
+  --accent:#1f5eff; --accent-ink:#ffffff; --bad:#c62828; --ok:#1b7f3b; --label:#ffffff;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#101417; --panel:#1a2025; --ink:#e8edf1; --muted:#93a0aa; --line:#2e373e;
+         --accent:#6b93ff; --accent-ink:#0b1020; --bad:#ff7b72; --ok:#5fd486; --label:#f4f4f2; }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);
+  -webkit-text-size-adjust:100%;
+}
+header{
+  display:flex; align-items:center; gap:10px; padding:12px 14px;
+  position:sticky; top:0; z-index:5; background:var(--bg);
+  border-bottom:1px solid var(--line);
+}
+header h1{font-size:18px; margin:0; font-weight:700; letter-spacing:-.01em; flex:1}
+.status{font-size:13px; color:var(--muted)}
+.status.on{color:var(--ok)}
+button,select,input,textarea{font:inherit; color:inherit}
+button{
+  border:1px solid var(--line); background:var(--panel); border-radius:10px;
+  padding:10px 14px; min-height:44px; cursor:pointer;
+}
+button.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600}
+button.danger{color:var(--bad)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+button:disabled{opacity:.5}
+main{max-width:640px; margin:0 auto; padding:14px; display:grid; gap:14px}
+.stage{
+  background:repeating-linear-gradient(45deg,transparent 0 8px,rgba(128,128,128,.07) 8px 16px);
+  border:1px solid var(--line); border-radius:12px; padding:14px;
+  display:flex; justify-content:center; overflow:auto;
+}
+canvas{background:var(--label); max-width:100%; height:auto; box-shadow:0 1px 6px rgba(0,0,0,.25); touch-action:none; image-rendering:pixelated}
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; display:grid; gap:12px}
+.panel h2{margin:0; font-size:15px; font-weight:700}
+.row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+.row > *{flex:0 0 auto}
+.grow{flex:1 1 140px !important}
+label.f{display:grid; gap:4px; font-size:13px; color:var(--muted)}
+label.f input,label.f select,label.f textarea{
+  background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; min-height:42px; color:var(--ink); width:100%;
+}
+textarea{resize:vertical; min-height:70px}
+input[type=range]{padding:0; min-height:32px}
+.seg{display:flex; border:1px solid var(--line); border-radius:10px; overflow:hidden}
+.seg button{border:0; border-radius:0; min-height:40px; padding:8px 12px; background:var(--panel)}
+.seg button[aria-pressed=true]{background:var(--accent); color:var(--accent-ink)}
+.tabs{display:flex; gap:8px; flex-wrap:wrap}
+.hint{font-size:13px; color:var(--muted); margin:0}
+details summary{cursor:pointer; font-weight:600; min-height:32px}
+pre#log{margin:0; font:12px/1.4 ui-monospace,Menlo,monospace; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; max-height:160px; overflow:auto; white-space:pre-wrap}
+.printbar{position:sticky; bottom:0; padding:10px 14px calc(10px + env(safe-area-inset-bottom,0)); background:var(--bg); border-top:1px solid var(--line); display:flex; gap:10px; align-items:center}
+.printbar .primary{flex:1}
+.copies{width:76px}
+.copies input{text-align:center}
+.hidden{display:none !important}
+.banner{border:1px solid var(--line); border-left:4px solid var(--bad); background:var(--panel); border-radius:10px; padding:12px 14px; font-size:14px; white-space:pre-wrap}
+.banner.info{border-left-color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>M220 Print</h1>
+  <span id="status" class="status">Not connected</span>
+  <button id="btnConnect" class="primary">Connect</button>
+</header>
+
+<main>
+  <div id="banner" class="banner hidden" role="status"></div>
+  <div class="stage"><canvas id="cv"></canvas></div>
+
+  <section class="panel">
+    <h2>Label</h2>
+    <div class="row">
+      <label class="f grow">Width (mm)<input id="wmm" type="number" min="10" max="72" value="50" inputmode="numeric"></label>
+      <label class="f grow">Height (mm)<input id="hmm" type="number" min="10" max="300" value="30" inputmode="numeric"></label>
+      <label class="f grow">Preset
+        <select id="preset">
+          <option value="">Custom</option>
+          <option value="50x30">50 × 30</option>
+          <option value="40x30">40 × 30</option>
+          <option value="70x50">70 × 50</option>
+          <option value="72x40">72 × 40</option>
+          <option value="72x100">72 × 100</option>
+        </select>
+      </label>
+    </div>
+    <label class="row" style="gap:10px"><input type="checkbox" id="rotate"> <span>Landscape: turn the design 90° when printing</span></label>
+    <p class="hint">Width is across the print head (max 72 mm). In landscape mode the design is drawn wide and rotated for you.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Add to label</h2>
+    <div class="tabs">
+      <button id="addText">+ Text</button>
+      <button id="addQR">+ QR code</button>
+      <button id="addImg">+ Image</button>
+      <input id="file" type="file" accept="image/*" class="hidden">
+    </div>
+    <div id="editor" class="hidden">
+      <div class="row" style="margin-bottom:10px">
+        <strong id="selName" class="grow">Selected</strong>
+        <button id="btnUp" aria-label="Bring forward">↑</button>
+        <button id="btnDel" class="danger">Delete</button>
+      </div>
+      <div id="edText" class="grow" style="display:grid; gap:10px">
+        <label class="f">Text<textarea id="tText"></textarea></label>
+        <div class="row">
+          <label class="f grow">Size<input id="tSize" type="range" min="10" max="200" step="1"></label>
+          <div class="seg" id="tAlign" role="group" aria-label="Alignment">
+            <button data-v="left">Left</button><button data-v="center">Centre</button><button data-v="right">Right</button>
+          </div>
+        </div>
+        <div class="row">
+          <label class="row" style="gap:8px"><input type="checkbox" id="tBold"> Bold</label>
+          <label class="row" style="gap:8px"><input type="checkbox" id="tInvert"> White on black</label>
+          <label class="f grow">Font
+            <select id="tFont">
+              <option value="system-ui, sans-serif">Sans</option>
+              <option value="Georgia, serif">Serif</option>
+              <option value="ui-monospace, Menlo, monospace">Mono</option>
+              <option value="Impact, 'Arial Narrow', sans-serif">Condensed</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="edQR" style="display:grid; gap:10px">
+        <label class="f">Content (link, text, Wi‑Fi string…)<textarea id="qText"></textarea></label>
+        <label class="f">Size<input id="qSize" type="range" min="60" max="576" step="2"></label>
+      </div>
+      <div id="edImg" style="display:grid; gap:10px">
+        <label class="f">Size<input id="iSize" type="range" min="40" max="576" step="2"></label>
+        <label class="f">Shading
+          <select id="iMode"><option value="dither">Photo (dithered)</option><option value="thresh">Line art (hard black/white)</option></select>
+        </label>
+        <label class="f">Threshold<input id="iThr" type="range" min="40" max="220" step="1"></label>
+      </div>
+      <p class="hint">Drag items on the label to move them.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Print settings</h2>
+    <div class="row">
+      <label class="f grow">Darkness (1–15)<input id="density" type="range" min="1" max="15" value="8"></label>
+      <label class="f grow">Paper type
+        <select id="media">
+          <option value="0a">Gap labels</option>
+          <option value="0b">Black‑mark labels</option>
+          <option value="26">Continuous</option>
+        </select>
+      </label>
+    </div>
+    <details>
+      <summary>Advanced (Bluetooth and commands)</summary>
+      <div style="display:grid; gap:10px; margin-top:10px">
+        <label class="f">Service UUID<input id="svc" value="0000ff00-0000-1000-8000-00805f9b34fb"></label>
+        <label class="f">Write characteristic UUID<input id="chr" value="0000ff02-0000-1000-8000-00805f9b34fb"></label>
+        <label class="f">Header bytes (hex, sent before the image)<input id="hdr" value="1b4e0d05 1b4e04{density} 1f11{media}"></label>
+        <label class="f">Footer bytes (hex, sent after the image)<input id="ftr" value="1ff00500 1ff00300"></label>
+        <label class="f">Chunk size (bytes)<input id="chunk" type="number" value="128"></label>
+        <label class="f">Delay between chunks (ms)<input id="delay" type="number" value="8"></label>
+        <p class="hint">Defaults follow the command set used by Phomemo’s M110/M220 family. If your printer feeds blank paper or ignores prints, edit these here and use the log below.</p>
+        <pre id="log">Log</pre>
+        <div class="row"><button id="btnTest">Print test pattern</button><button id="btnPreview">Download preview PNG</button></div>
+      </div>
+    </details>
+  </section>
+</main>
+
+<div class="printbar">
+  <label class="copies"><input id="copies" type="number" min="1" max="99" value="1" aria-label="Copies" style="width:100%;min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:0 8px"></label>
+  <button id="btnPrint" class="primary">Print label</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const DPMM = 8;            // M220 is 203 dpi ≈ 8 dots per mm
+const MAX_DOTS = 576;      // 72 mm print head
+
+/* ---------- state ---------- */
+const state = { els: [], sel: null, nextId: 1 };
+const S = { wmm:50, hmm:30, rotate:false };
+let device = null, charac = null;
+
+function notice(msg, info){ const b=$("banner"); if(!msg){ b.classList.add("hidden"); return; } b.textContent=msg; b.classList.toggle("info",!!info); b.classList.remove("hidden"); try{ b.scrollIntoView({block:"nearest"}); }catch(e){} }
+function log(m){ const l=$("log"); l.textContent = (l.textContent==="Log"?"":l.textContent+"\n") + m; l.scrollTop=l.scrollHeight; }
+function saveSettings(){
+  try{ localStorage.setItem("m220", JSON.stringify({
+    wmm:S.wmm,hmm:S.hmm,rotate:S.rotate,density:$("density").value,media:$("media").value,
+    svc:$("svc").value,chr:$("chr").value,hdr:$("hdr").value,ftr:$("ftr").value,chunk:$("chunk").value,delay:$("delay").value
+  })); }catch(e){}
+}
+function loadSettings(){
+  try{
+    const s = JSON.parse(localStorage.getItem("m220")||"null"); if(!s) return;
+    S.wmm=+s.wmm||50; S.hmm=+s.hmm||30; S.rotate=!!s.rotate;
+    ["density","media","svc","chr","hdr","ftr","chunk","delay"].forEach(k=>{ if(s[k]!==undefined) $(k).value=s[k]; });
+  }catch(e){}
+}
+
+/* ---------- canvas geometry ---------- */
+const cv = $("cv"), ctx = cv.getContext("2d", {willReadFrequently:true});
+function dims(){
+  // design canvas size in dots. In landscape mode the design is wide (hmm across).
+  let w = S.wmm*DPMM, h = S.hmm*DPMM;
+  if(S.rotate){ w = S.hmm*DPMM; h = S.wmm*DPMM; }
+  return { w: Math.round(w), h: Math.round(h) };
+}
+function resize(){
+  const d = dims(); cv.width = d.w; cv.height = d.h;
+  cv.style.width = Math.min(d.w, 360) * (d.w>360?1:1) + "px";
+  cv.style.width = "min(100%, " + d.w + "px)";
+  render();
+}
+
+/* ---------- elements ---------- */
+function addEl(e){ e.id = state.nextId++; state.els.push(e); select(e.id); render(); }
+function sel(){ return state.els.find(e=>e.id===state.sel) || null; }
+
+$("addText").onclick = () => { const d=dims(); addEl({type:"text", text:"Hello", x:10, y:10, w:d.w-20, size:48, bold:true, align:"left", font:"system-ui, sans-serif", invert:false}); };
+$("addQR").onclick = () => { const d=dims(); const s=Math.min(d.h-20,d.w-20,200); addEl({type:"qr", text:"https://example.com", x:10, y:10, size:s}); };
+$("addImg").onclick = () => $("file").click();
+$("file").onchange = ev => {
+  const f = ev.target.files[0]; if(!f) return;
+  const img = new Image();
+  img.onload = () => { const d=dims(); const s=Math.min(d.w-20, 300); addEl({type:"image", img, x:10, y:10, size:s, mode:"dither", thr:128}); URL.revokeObjectURL(img.src); };
+  img.src = URL.createObjectURL(f); ev.target.value="";
+};
+
+/* text layout */
+function wrapLines(c, text, maxW){
+  const out=[];
+  text.split("\n").forEach(par=>{
+    const words = par.split(" "); let line="";
+    words.forEach(w=>{
+      const t = line ? line+" "+w : w;
+      if(c.measureText(t).width <= maxW || !line){ line=t; } else { out.push(line); line=w; }
+    });
+    out.push(line);
+  });
+  return out;
+}
+function textLayout(e){
+  ctx.font = (e.bold?"700 ":"400 ") + e.size + "px " + e.font;
+  const lines = wrapLines(ctx, e.text, e.w);
+  const lh = Math.round(e.size*1.15);
+  return { lines, lh, h: lines.length*lh + 8 };
+}
+
+/* QR + image caches */
+function qrModules(text){
+  if(typeof qrcode === "undefined") return null;
+  try{ const q = qrcode(0,"M"); q.addData(text||" "); q.make(); return q; }catch(e){ return null; }
+}
+const imgCache = new Map();
+function processedImage(e){
+  const key = [e.id,e.size,e.mode,e.thr].join("|");
+  if(imgCache.has(key)) return imgCache.get(key);
+  const w = Math.max(1,Math.round(e.size)), h = Math.max(1,Math.round(e.size*e.img.height/e.img.width));
+  const c = document.createElement("canvas"); c.width=w; c.height=h;
+  const x = c.getContext("2d", {willReadFrequently:true});
+  x.fillStyle="#fff"; x.fillRect(0,0,w,h); x.drawImage(e.img,0,0,w,h);
+  const id = x.getImageData(0,0,w,h), d=id.data;
+  const g = new Float32Array(w*h);
+  for(let i=0;i<w*h;i++) g[i] = 0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2];
+  if(e.mode==="dither"){
+    for(let yy=0;yy<h;yy++) for(let xx=0;xx<w;xx++){
+      const i=yy*w+xx, o=g[i], n=o<e.thr?0:255, er=o-n; g[i]=n;
+      if(xx+1<w) g[i+1]+=er*7/16;
+      if(yy+1<h){ if(xx>0) g[i+w-1]+=er*3/16; g[i+w]+=er*5/16; if(xx+1<w) g[i+w+1]+=er/16; }
+    }
+  } else { for(let i=0;i<w*h;i++) g[i] = g[i]<e.thr?0:255; }
+  for(let i=0;i<w*h;i++){ const v=g[i]<128?0:255; d[i*4]=d[i*4+1]=d[i*4+2]=v; d[i*4+3]=255; }
+  x.putImageData(id,0,0);
+  if(imgCache.size>20) imgCache.clear();
+  imgCache.set(key,c); return c;
+}
+function bounds(e){
+  if(e.type==="text"){ return {x:e.x,y:e.y,w:e.w,h:textLayout(e).h}; }
+  if(e.type==="qr"){ return {x:e.x,y:e.y,w:e.size,h:e.size}; }
+  const p = processedImage(e); return {x:e.x,y:e.y,w:p.width,h:p.height};
+}
+
+/* ---------- render ---------- */
+function render(forPrint){
+  ctx.fillStyle="#fff"; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.textBaseline="top";
+  state.els.forEach(e=>{
+    if(e.type==="text"){
+      const L = textLayout(e);
+      if(e.invert){ ctx.fillStyle="#000"; ctx.fillRect(e.x,e.y,e.w,L.h); }
+      ctx.fillStyle = e.invert ? "#fff" : "#000";
+      ctx.font = (e.bold?"700 ":"400 ") + e.size + "px " + e.font;
+      ctx.textAlign = e.align==="center"?"center":e.align==="right"?"right":"left";
+      const tx = e.align==="center"? e.x+e.w/2 : e.align==="right"? e.x+e.w : e.x;
+      L.lines.forEach((ln,i)=> ctx.fillText(ln, tx, e.y+4+i*L.lh));
+      ctx.textAlign="left";
+    } else if(e.type==="qr"){
+      const q = qrModules(e.text);
+      if(!q){ ctx.fillStyle="#000"; ctx.strokeRect(e.x,e.y,e.size,e.size); ctx.font="14px sans-serif"; ctx.fillText("QR library not loaded",e.x+4,e.y+4); return; }
+      const n = q.getModuleCount(), quiet = 2, total = n+quiet*2;
+      const cell = Math.max(1, Math.floor(e.size/total));
+      const ox = e.x + Math.floor((e.size-cell*total)/2) + quiet*cell, oy = e.y + Math.floor((e.size-cell*total)/2) + quiet*cell;
+      ctx.fillStyle="#000";
+      for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(q.isDark(r,c)) ctx.fillRect(ox+c*cell, oy+r*cell, cell, cell);
+    } else if(e.type==="image"){
+      ctx.drawImage(processedImage(e), Math.round(e.x), Math.round(e.y));
+    }
+  });
+  if(!forPrint){
+    const e = sel();
+    if(e){ const b=bounds(e); ctx.save(); ctx.strokeStyle="#1f5eff"; ctx.lineWidth=2; ctx.setLineDash([8,6]); ctx.strokeRect(b.x-2,b.y-2,b.w+4,b.h+4); ctx.restore(); }
+  }
+}
+
+/* ---------- selection + dragging ---------- */
+function select(id){ state.sel=id; syncEditor(); render(); }
+function pt(ev){ const r=cv.getBoundingClientRect(); return { x:(ev.clientX-r.left)*cv.width/r.width, y:(ev.clientY-r.top)*cv.height/r.height }; }
+let drag=null;
+cv.addEventListener("pointerdown", ev=>{
+  const p = pt(ev); let hit=null;
+  for(let i=state.els.length-1;i>=0;i--){ const b=bounds(state.els[i]); if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){ hit=state.els[i]; break; } }
+  if(hit){ select(hit.id); drag={dx:p.x-hit.x, dy:p.y-hit.y, e:hit}; cv.setPointerCapture(ev.pointerId); }
+  else { select(null); }
+});
+cv.addEventListener("pointermove", ev=>{ if(!drag) return; const p=pt(ev); drag.e.x=Math.round(p.x-drag.dx); drag.e.y=Math.round(p.y-drag.dy); render(); });
+cv.addEventListener("pointerup", ()=>{ drag=null; });
+cv.addEventListener("pointercancel", ()=>{ drag=null; });
+
+/* ---------- editor panel ---------- */
+function show(id,on){ $(id).classList.toggle("hidden",!on); $(id).style.display = on ? "grid" : "none"; }
+function syncEditor(){
+  const e = sel();
+  $("editor").classList.toggle("hidden", !e);
+  if(!e) return;
+  $("selName").textContent = e.type==="text"?"Text":e.type==="qr"?"QR code":"Image";
+  show("edText", e.type==="text"); show("edQR", e.type==="qr"); show("edImg", e.type==="image");
+  if(e.type==="text"){
+    $("tText").value=e.text; $("tSize").value=e.size; $("tBold").checked=e.bold; $("tInvert").checked=e.invert; $("tFont").value=e.font;
+    [...$("tAlign").children].forEach(b=>b.setAttribute("aria-pressed", String(b.dataset.v===e.align)));
+  } else if(e.type==="qr"){ $("qText").value=e.text; $("qSize").value=e.size; }
+  else { $("iSize").value=e.size; $("iMode").value=e.mode; $("iThr").value=e.thr; }
+}
+function bind(id, fn, ev="input"){ $(id).addEventListener(ev, ()=>{ const e=sel(); if(!e) return; fn(e); render(); }); }
+bind("tText", e=>e.text=$("tText").value);
+bind("tSize", e=>e.size=+$("tSize").value);
+bind("tBold", e=>e.bold=$("tBold").checked, "change");
+bind("tInvert", e=>e.invert=$("tInvert").checked, "change");
+bind("tFont", e=>e.font=$("tFont").value, "change");
+bind("qText", e=>e.text=$("qText").value);
+bind("qSize", e=>e.size=+$("qSize").value);
+bind("iSize", e=>e.size=+$("iSize").value);
+bind("iMode", e=>e.mode=$("iMode").value, "change");
+bind("iThr", e=>e.thr=+$("iThr").value);
+[...$("tAlign").children].forEach(b=> b.onclick=()=>{ const e=sel(); if(!e) return; e.align=b.dataset.v; syncEditor(); render(); });
+$("btnDel").onclick = ()=>{ state.els = state.els.filter(e=>e.id!==state.sel); select(null); };
+$("btnUp").onclick = ()=>{ const i=state.els.findIndex(e=>e.id===state.sel); if(i>=0&&i<state.els.length-1){ const [e]=state.els.splice(i,1); state.els.splice(i+1,0,e); render(); } };
+
+/* ---------- label settings ---------- */
+function applyLabel(){
+  S.wmm = Math.max(10, Math.min(72, +$("wmm").value||50));
+  S.hmm = Math.max(10, Math.min(300, +$("hmm").value||30));
+  S.rotate = $("rotate").checked; saveSettings(); resize();
+}
+["wmm","hmm"].forEach(id=>$(id).addEventListener("change", ()=>{ $("preset").value=""; applyLabel(); }));
+$("rotate").addEventListener("change", applyLabel);
+$("preset").addEventListener("change", ()=>{ const v=$("preset").value; if(!v) return; const [w,h]=v.split("x"); $("wmm").value=w; $("hmm").value=h; applyLabel(); });
+["density","media","svc","chr","hdr","ftr","chunk","delay"].forEach(id=>$(id).addEventListener("change", saveSettings));
+
+/* ---------- bitmap + protocol ---------- */
+function bitmapFromCanvas(){
+  render(true);
+  let src = cv;
+  if(S.rotate){
+    const r = document.createElement("canvas"); r.width=cv.height; r.height=cv.width;
+    const x = r.getContext("2d"); x.translate(r.width/2, r.height/2); x.rotate(Math.PI/2); x.drawImage(cv,-cv.width/2,-cv.height/2);
+    src = r;
+  }
+  // pad width to the nearest multiple of 8 dots, anchored left
+  const w = src.width, h = src.height, bpl = Math.ceil(w/8);
+  const px = src.getContext("2d",{willReadFrequently:true}).getImageData(0,0,w,h).data;
+  const out = new Uint8Array(bpl*h);
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const i=(y*w+x)*4; const lum = 0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];
+    if(lum<128 && px[i+3]>0) out[y*bpl + (x>>3)] |= 0x80 >> (x&7);
+  }
+  render(); // restore selection outline
+  return { data:out, bpl, h };
+}
+function hex(str){
+  const clean = str.replace(/\{density\}/g, (+$("density").value).toString(16).padStart(2,"0"))
+                   .replace(/\{media\}/g, $("media").value).replace(/[^0-9a-fA-F]/g,"");
+  const a = new Uint8Array(Math.floor(clean.length/2));
+  for(let i=0;i<a.length;i++) a[i]=parseInt(clean.substr(i*2,2),16);
+  return a;
+}
+function buildJob(bmp){
+  const hdr = hex($("hdr").value), ftr = hex($("ftr").value);
+  const ras = new Uint8Array([0x1d,0x76,0x30,0x00, bmp.bpl&255, bmp.bpl>>8, bmp.h&255, bmp.h>>8]);
+  const total = hdr.length+ras.length+bmp.data.length+ftr.length;
+  const job = new Uint8Array(total); let o=0;
+  [hdr,ras,bmp.data,ftr].forEach(a=>{ job.set(a,o); o+=a.length; });
+  return job;
+}
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+async function sendJob(job){
+  const size = Math.max(20, +$("chunk").value||128), delay = +$("delay").value||0;
+  for(let i=0;i<job.length;i+=size){
+    const part = job.slice(i,i+size);
+    if(charac.writeValueWithoutResponse) await charac.writeValueWithoutResponse(part); else await charac.writeValue(part);
+    if(delay) await sleep(delay);
+  }
+}
+
+/* ---------- bluetooth ---------- */
+function setStatus(t,on){ const s=$("status"); s.textContent=t; s.classList.toggle("on",!!on); $("btnConnect").textContent = on ? "Disconnect" : "Connect"; }
+async function connect(){
+  notice("");
+  const env = "Browser: " + (navigator.userAgent.match(/(Chrome|Firefox|SamsungBrowser|EdgA|Edg|OPR)\/[\d.]+/)||["unknown"])[0] +
+              "\nSecure context: " + window.isSecureContext + "\nWeb Bluetooth: " + !!navigator.bluetooth + "\nAddress: " + location.protocol + "//" + (location.host||"(local file)");
+  log(env);
+  if(!navigator.bluetooth){
+    notice("This page can’t use Bluetooth here.\n\n" + env + "\n\nFix: open it in Chrome for Android (not a file previewer, Samsung Internet, Firefox or an in‑app viewer). If it was opened from Downloads, try serving it over https (e.g. GitHub Pages) instead of a local file.");
+    return;
+  }
+  try{
+    setStatus("Opening device list…");
+    const svc = $("svc").value.trim().toLowerCase();
+    notice("Waiting for the device list. Turn the printer on and keep it close. If no list appears, check Bluetooth and Location are on and that Chrome has the Nearby devices permission.", true);
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices:true, optionalServices:[svc] });
+    notice("");
+    device.addEventListener("gattserverdisconnected", ()=>{ charac=null; setStatus("Disconnected"); log("Disconnected"); });
+    setStatus("Connecting to " + (device.name||"device") + "…");
+    log("Chosen: " + (device.name||"(no name)") + " " + device.id);
+    const server = await device.gatt.connect();
+    log("GATT connected");
+    let service;
+    try{ service = await server.getPrimaryService(svc); }
+    catch(e){
+      notice("Connected to " + (device.name||"the device") + " but it doesn’t expose service " + svc + ".\n\nIt may be a different Bluetooth profile. Use the free nRF Connect app to look at the printer’s services, then paste the right service and write‑characteristic IDs into Advanced.", false);
+      log("Service error: " + e); try{ server.disconnect(); }catch(_){}; setStatus("Not connected"); return;
+    }
+    const chars = await service.getCharacteristics();
+    log("Characteristics: " + chars.map(c=>c.uuid.slice(4,8)+(c.properties.write?"W":"")+(c.properties.writeWithoutResponse?"w":"")+(c.properties.notify?"N":"")).join(" "));
+    const want = $("chr").value.trim().toLowerCase();
+    charac = chars.find(c=>c.uuid===want) || chars.find(c=>c.properties.write||c.properties.writeWithoutResponse);
+    if(!charac) throw new Error("No writable characteristic found");
+    setStatus("Connected: " + (device.name||"printer"), true); log("Using " + charac.uuid);
+  }catch(err){
+    setStatus("Not connected");
+    if(err && err.name==="NotFoundError"){
+      notice("No device was chosen, or the list was empty.\n\n• Printer on, and not connected to another phone/app\n• Bluetooth and Location both on\n• Chrome allowed ‘Nearby devices’ (Android Settings › Apps › Chrome › Permissions)\n• If the printer is paired in Android’s Bluetooth settings, tap Forget, then try again", false);
+      return;
+    }
+    log("Connect failed: " + err);
+    notice("Connect failed: " + (err && err.name ? err.name + ": " : "") + (err && err.message ? err.message : err) + "\n\nSee the log under Advanced for details.", false);
+  }
+}
+$("btnConnect").onclick = ()=>{ if(device && device.gatt.connected){ device.gatt.disconnect(); } else connect(); };
+
+async function printNow(bmp, copies){
+  if(!charac){ await connect(); if(!charac) return; }
+  $("btnPrint").disabled = true; const old=$("btnPrint").textContent;
+  try{
+    const job = buildJob(bmp);
+    for(let i=0;i<copies;i++){
+      $("btnPrint").textContent = "Printing " + (i+1) + " of " + copies + "…";
+      await sendJob(job); log("Sent copy " + (i+1) + " (" + job.length + " bytes)");
+      if(i<copies-1) await sleep(900);
+    }
+  }catch(err){ log("Print failed: "+err); notice("Print failed: " + err.message); }
+  $("btnPrint").disabled=false; $("btnPrint").textContent=old;
+}
+$("btnPrint").onclick = ()=> printNow(bitmapFromCanvas(), Math.max(1,Math.min(99,+$("copies").value||1)));
+$("btnTest").onclick = ()=>{
+  const bpl = Math.ceil(Math.min(S.wmm*DPMM, MAX_DOTS)/8), h=160, data=new Uint8Array(bpl*h);
+  for(let y=0;y<h;y++) for(let b=0;b<bpl;b++) data[y*bpl+b] = (y<4||y>h-5) ? 0xff : (y%32<16 ? 0xaa : 0x55);
+  data[0]=0xff; printNow({data,bpl,h},1);
+};
+$("btnPreview").onclick = ()=>{ render(true); const a=document.createElement("a"); a.href=cv.toDataURL("image/png"); a.download="label.png"; a.click(); render(); };
+
+/* ---------- start ---------- */
+loadSettings();
+$("wmm").value=S.wmm; $("hmm").value=S.hmm; $("rotate").checked=S.rotate;
+resize();
+const d0 = dims();
+addEl({type:"text", text:"M220 ready", x:12, y:12, w:d0.w-24, size:Math.min(56,Math.round(d0.h/3)), bold:true, align:"left", font:"system-ui, sans-serif", invert:false});
+select(null);
+})();
+</script>
+</body>
+</html>
