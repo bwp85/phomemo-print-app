@@ -169,6 +169,9 @@ pre#log{margin:0; font:12px/1.4 ui-monospace,Menlo,monospace; background:var(--b
     <details>
       <summary>Advanced (Bluetooth and commands)</summary>
       <div style="display:grid; gap:10px; margin-top:10px">
+        <label class="f">Connection type
+          <select id="mode"><option value="ble">Bluetooth LE (web)</option><option value="serial">Classic Bluetooth / USB serial (Web Serial)</option></select>
+        </label>
         <label class="f">Service UUID<input id="svc" value="0000ff00-0000-1000-8000-00805f9b34fb"></label>
         <label class="f">Write characteristic UUID<input id="chr" value="0000ff02-0000-1000-8000-00805f9b34fb"></label>
         <label class="f">Header bytes (hex, sent before the image)<input id="hdr" value="1b4e0d05 1b4e04{density} 1f11{media}"></label>
@@ -199,7 +202,7 @@ const MAX_DOTS = 576;      // 72 mm print head
 /* ---------- state ---------- */
 const state = { els: [], sel: null, nextId: 1 };
 const S = { wmm:50, hmm:30, rotate:false };
-let device = null, charac = null;
+let device = null, charac = null, port = null, writer = null;
 
 function notice(msg, info){ const b=$("banner"); if(!msg){ b.classList.add("hidden"); return; } b.textContent=msg; b.classList.toggle("info",!!info); b.classList.remove("hidden"); try{ b.scrollIntoView({block:"nearest"}); }catch(e){} }
 function log(m){ const l=$("log"); l.textContent = (l.textContent==="Log"?"":l.textContent+"\n") + m; l.scrollTop=l.scrollHeight; }
@@ -213,7 +216,7 @@ function loadSettings(){
   try{
     const s = JSON.parse(localStorage.getItem("m220")||"null"); if(!s) return;
     S.wmm=+s.wmm||50; S.hmm=+s.hmm||30; S.rotate=!!s.rotate;
-    ["density","media","svc","chr","hdr","ftr","chunk","delay"].forEach(k=>{ if(s[k]!==undefined) $(k).value=s[k]; });
+    ["density","media","mode","svc","chr","hdr","ftr","chunk","delay"].forEach(k=>{ if(s[k]!==undefined) $(k).value=s[k]; });
   }catch(e){}
 }
 
@@ -384,7 +387,7 @@ function applyLabel(){
 ["wmm","hmm"].forEach(id=>$(id).addEventListener("change", ()=>{ $("preset").value=""; applyLabel(); }));
 $("rotate").addEventListener("change", applyLabel);
 $("preset").addEventListener("change", ()=>{ const v=$("preset").value; if(!v) return; const [w,h]=v.split("x"); $("wmm").value=w; $("hmm").value=h; applyLabel(); });
-["density","media","svc","chr","hdr","ftr","chunk","delay"].forEach(id=>$(id).addEventListener("change", saveSettings));
+["density","media","mode","svc","chr","hdr","ftr","chunk","delay"].forEach(id=>$(id).addEventListener("change", saveSettings));
 
 /* ---------- bitmap + protocol ---------- */
 function bitmapFromCanvas(){
@@ -423,6 +426,10 @@ function buildJob(bmp){
 }
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 async function sendJob(job){
+  if($("mode").value==="serial"){
+    const sz = 1024; for(let i=0;i<job.length;i+=sz){ await writer.write(job.slice(i,i+sz)); }
+    return;
+  }
   const size = Math.max(20, +$("chunk").value||128), delay = +$("delay").value||0;
   for(let i=0;i<job.length;i+=size){
     const part = job.slice(i,i+size);
@@ -433,7 +440,24 @@ async function sendJob(job){
 
 /* ---------- bluetooth ---------- */
 function setStatus(t,on){ const s=$("status"); s.textContent=t; s.classList.toggle("on",!!on); $("btnConnect").textContent = on ? "Disconnect" : "Connect"; }
+async function connectSerial(){
+  if(!("serial" in navigator)){
+    notice("Web Serial isn’t available in this browser, so classic Bluetooth can’t be used from a web page here. It works in desktop Chrome or Edge (pair the M220 in the computer’s Bluetooth settings first), or over USB with a cable.\n\nOn Android the fix is a small native app.");
+    return;
+  }
+  try{
+    notice("Choose the M220 from the list. It must already be paired in your device’s Bluetooth settings.", true);
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate:115200 });
+    writer = port.writable.getWriter(); charac = {serial:true};
+    notice(""); setStatus("Connected (serial)", true); log("Serial port open: " + JSON.stringify(port.getInfo()));
+  }catch(err){
+    setStatus("Not connected"); if(err && err.name==="NotFoundError"){ notice(""); return; }
+    log("Serial failed: " + err); notice("Serial connect failed: " + (err && err.message ? err.message : err));
+  }
+}
 async function connect(){
+  if($("mode").value==="serial") return connectSerial();
   notice("");
   const env = "Browser: " + (navigator.userAgent.match(/(Chrome|Firefox|SamsungBrowser|EdgA|Edg|OPR)\/[\d.]+/)||["unknown"])[0] +
               "\nSecure context: " + window.isSecureContext + "\nWeb Bluetooth: " + !!navigator.bluetooth + "\nAddress: " + location.protocol + "//" + (location.host||"(local file)");
@@ -475,7 +499,10 @@ async function connect(){
     notice("Connect failed: " + (err && err.name ? err.name + ": " : "") + (err && err.message ? err.message : err) + "\n\nSee the log under Advanced for details.", false);
   }
 }
-$("btnConnect").onclick = ()=>{ if(device && device.gatt.connected){ device.gatt.disconnect(); } else connect(); };
+$("btnConnect").onclick = async ()=>{
+  if(charac && charac.serial){ try{ writer.releaseLock(); await port.close(); }catch(e){} charac=null; setStatus("Not connected"); return; }
+  if(device && device.gatt && device.gatt.connected){ device.gatt.disconnect(); } else connect();
+};
 
 async function printNow(bmp, copies){
   if(!charac){ await connect(); if(!charac) return; }
